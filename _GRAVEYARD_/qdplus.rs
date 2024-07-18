@@ -8,7 +8,7 @@
 //     Call = 1
 //     Put = 2
 
-use crate::{european, TypeFlag};
+use crate::{european_pricer, TypeFlag};
 
 #[derive(Default)]
 pub struct QDPlus {
@@ -127,7 +127,7 @@ impl QDPlus {
         let b = self.backend.v_b;
 
         let pS = match self.option_type {
-            TypeFlag::Put => european::european_put_value(
+            TypeFlag::Put => european_pricer::european_put_value(
                 tau,
                 s,
                 self.riskfree,
@@ -135,7 +135,7 @@ impl QDPlus {
                 self.volatility,
                 self.strike,
             ),
-            TypeFlag::Call => european::european_call_value(
+            TypeFlag::Call => european_pricer::european_call_value(
                 tau,
                 s,
                 self.riskfree,
@@ -145,7 +145,7 @@ impl QDPlus {
             ),
         };
         let pSb = match self.option_type {
-            TypeFlag::Put => european::european_put_value(
+            TypeFlag::Put => european_pricer::european_put_value(
                 tau,
                 Sb,
                 self.riskfree,
@@ -153,7 +153,7 @@ impl QDPlus {
                 self.volatility,
                 self.strike,
             ),
-            TypeFlag::Call => european::european_call_value(
+            TypeFlag::Call => european_pricer::european_call_value(
                 tau,
                 Sb,
                 self.riskfree,

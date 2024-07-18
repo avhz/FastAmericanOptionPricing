@@ -7,4 +7,4 @@ edition = "2021"
 
 [dependencies]
 argmin = "0.10.0"
-statrs = "0.16.0"
+statrs = "0.17.1"
