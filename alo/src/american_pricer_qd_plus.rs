@@ -1,538 +1,344 @@
-// import numpy as np
-// import scipy.stats as stats
-// import scipy.optimize
-// import EuropeanOptionSolver as europ
-
-use crate::{
-    european_pricer::{d1, d2, european_call_value, european_option_theta, european_put_value},
-    OptionType,
-};
-use argmin::{
-    core::{CostFunction, Executor, State},
-    solver::brent::BrentRoot,
-};
+use crate::european_pricer::*;
+use crate::OptionType;
+use argmin::core::{CostFunction, Executor, State};
+use argmin::solver::brent::BrentRoot;
 use statrs::distribution::{Continuous, ContinuousCDF, Normal};
+use time::{Date, OffsetDateTime};
 
 #[derive(Debug, Clone, Copy)]
 pub struct QDplus {
-    pub r: f64,
-    pub q: f64,
-    pub v: f64,
-    pub K: f64,
+    pub strike: f64,
+    pub riskfree: f64,
+    pub dividend: f64,
+    pub volatility: f64,
+    pub expiration_date: Date,
+    pub evaluation_date: Option<Date>,
     pub option_type: OptionType,
-
-    // PRIVATE FIELDS
-    // These are used in the backend of the QD+ algorithm.
-    exercise_boundary: f64,
-    tolerance: f64,
-    // option_indicator: i32,
-    // v_M: f64,
-    // v_N: f64,
-    // v_h: f64,
-    // v_qQD: f64,
-    // v_qQDdot: f64,
-    // v_p: f64,
-    // v_theta: f64,
-    // v_c: f64,
-    // v_b: f64,
-    // v_d1: f64,
-    // v_d2: f64,
-    // v_dlogSdh: f64,
 }
 
+const DAYS_IN_YEAR: f64 = 365.25;
+const MAX_ITERS: u64 = 10000;
+const LOWER_BOUND: f64 = 0.0;
+const UPPER_BOUND_MULTIPLIER: f64 = 100.0;
+
 impl CostFunction for QDplus {
-    type Param = Vec<f64>;
+    type Param = f64;
     type Output = f64;
 
     fn cost(&self, p: &Self::Param) -> Result<Self::Output, argmin::core::Error> {
-        Ok(self.exercise_boundary_func(p[0], p[1]))
+        Ok(self.exercise_boundary_function(*p))
     }
 }
 
-// class QDplus:
-//     """QD+ alogrithm for computing approximated american option price"""
 impl QDplus {
-    //     def __init__(self, riskfree, dividend, volatility, strike, option_type):
-    //         self.r = riskfree
-    //         self.q = dividend
-    //         self.sigma = volatility
-    //         self.K = strike
-    //         self.option_type = option_type
-    //         if option_type == OptionType.Call:
-    //             self.option_indicator = 1
-    //         else:
-    //             self.option_indicator = -1
-    //         # miscellaneous with tau only
-    //         self.v_M = 0
-    //         self.v_N = 0
-    //         self.v_h = 0
-    //         self.v_qQD = 0
-    //         self.v_qQDdot = 0
-    //         # miscellaneous terms with tau and S
-    //         self.v_p = 0
-    //         self.v_theta = 0
-    //         self.v_c = 0
-    //         self.v_b = 0
-    //         self.v_d1 = 0
-    //         self.v_d2 = 0
-    //         self.v_dlogSdh = 0
-    //         self.exercise_boundary = 0
-    //         self.tolerance = 1e-10
-
     pub fn new(
+        strike: f64,
         riskfree: f64,
         dividend: f64,
         volatility: f64,
-        strike: f64,
         option_type: OptionType,
+        expiration_date: Date,
+        evaluation_date: Option<Date>,
     ) -> Self {
         Self {
-            r: riskfree,
-            q: dividend,
-            v: volatility,
-            K: strike,
+            riskfree,
+            dividend,
+            volatility,
+            strike,
             option_type,
-
-            // // # miscellaneous with tau only
-            // v_M: 0.0,
-            // v_N: 0.0,
-            // v_h: 0.0,
-            // v_qQD: 0.0,
-            // v_qQDdot: 0.0,
-            // // # miscellaneous terms with tau and S
-            // v_p: 0.0,
-            // v_theta: 0.0,
-            // v_c: 0.0,
-            // v_b: 0.0,
-            // v_d1: 0.0,
-            // v_d2: 0.0,
-            // v_dlogSdh: 0.0,
-            exercise_boundary: 0.0,
-            tolerance: f64::EPSILON,
+            expiration_date,
+            evaluation_date,
         }
     }
 
-    // def price(self, tau, S):
-    //     if tau == 0:
-    //         self.exercise_boundary = self.K
-    //         return max(S-self.K, 0.0)
+    pub fn price(&self, underlying: f64) -> f64 {
+        let t = self.year_fraction();
+        let s = underlying;
 
-    //     self.exercise_boundary = Sb = self.compute_exercise_boundary(tau)
-    //     err = self.exercise_boundary_func(Sb, tau)
-    //     print("err = ", err)
-
-    //     self.compute_miscellaneous(tau, Sb)
-    //     qQD = self.v_qQD
-    //     c = self.v_c
-    //     b = self.v_b
-    //     if self.option_type == OptionType.Put:
-    //         pS = europ.EuropeanOption.european_put_value(tau, S, self.r, self.q, self.sigma, self.K)
-    //         pSb = europ.EuropeanOption.european_put_value(tau, Sb, self.r, self.q, self.sigma, self.K)
-    //     else:
-    //         pS = europ.EuropeanOption.european_call_value(tau, S, self.r, self.q, self.sigma, self.K)
-    //         pSb = europ.EuropeanOption.european_call_value(tau, Sb, self.r, self.q, self.sigma, self.K)
-
-    //     if self.option_indicator * (Sb - S) <= 0:
-    //         return self.option_indicator * (S - self.K)
-    //     else:
-    //         return pS + (self.K - Sb - pSb)/(1 - b * np.square(np.log(S/Sb)) - c * np.log(S/Sb)) * np.power(S/Sb, qQD)
-
-    // def compute_exercise_boundary(self, tau):
-    //     if tau == 0:
-    //         return self.B_at_zero()
-    //     # using x0->0 is critical since there are multiple roots for the target function
-    //     res = scipy.optimize.root(self.exercise_boundary_func,x0=self.K, args=(tau,))
-    //     #if res.success == False:
-    //      #   print("succuess? ", res.success, ", ", res.message, ", res = ", res.x)
-    //     return res.x[0]
-    fn compute_exercise_boundary(&self, tau: f64) -> Result<f64, argmin::core::Error> {
-        if tau == 0.0 {
-            return Ok(self.B_at_zero());
+        if t == 0.0 {
+            return f64::max(s - self.strike, 0.0);
         }
 
-        let initial_guess = self.K;
-        let lower_bound = 0.0;
-        let upper_bound = 2.0 * self.K;
+        let s_star = self.compute_exercise_boundary().unwrap();
 
-        let solver = BrentRoot::new(lower_bound, upper_bound, self.tolerance);
+        let lambda = self.lambda(t);
+        let b = self.li_2009_eq30(t);
+        let c = self.li_2009_eq31(s, t);
+
+        let p_s = self.value(s, t);
+        let p_s_star = self.value(s_star, t);
+
+        match self.option_type as i32 as f64 * (s_star - s) <= 0.0 {
+            true => return self.option_type as i32 as f64 * (s - self.strike),
+            false => {
+                return p_s
+                    + (self.strike - s_star - p_s_star)
+                        / (1.0 - b * f64::powi(f64::ln(s / s_star), 2) - c * f64::ln(s / s_star))
+                        * f64::powf(s / s_star, lambda)
+            }
+        }
+    }
+
+    fn year_fraction(&self) -> f64 {
+        let today = OffsetDateTime::now_utc().date();
+
+        match self.evaluation_date {
+            Some(date) => {
+                if date > self.expiration_date {
+                    panic!("The evaluation date must be before the expiration date.");
+                }
+
+                (self.expiration_date - date).whole_days() as f64 / DAYS_IN_YEAR
+            }
+            None => {
+                if today > self.expiration_date {
+                    panic!(
+                        "You must provide an evaluation date if the expiration date is in the past."
+                    );
+                }
+
+                (self.expiration_date - today).whole_days() as f64 / DAYS_IN_YEAR
+            }
+        }
+    }
+
+    fn compute_exercise_boundary(&self) -> Result<f64, argmin::core::Error> {
+        let tau = self.year_fraction();
+
+        if tau == 0.0 {
+            return Ok(self.exercise_boundary_at_zero());
+        }
+
+        let initial_guess = self.strike;
+        let lower_bound = LOWER_BOUND;
+        let upper_bound = self.strike * UPPER_BOUND_MULTIPLIER;
+
+        let solver = BrentRoot::new(lower_bound, upper_bound, f64::EPSILON);
         let executor = Executor::new(*self, solver)
-            .configure(|state| state.param(initial_guess).max_iters(10));
+            .configure(|state| state.param(initial_guess).max_iters(MAX_ITERS));
 
         let result = executor.run()?;
 
         Ok(*result.state().get_best_param().unwrap())
     }
 
-    // def B_at_zero(self):
-    //     if self.option_type == OptionType.Call:
-    //         if self.r <= self.q:
-    //             return self.K
-    //         else:
-    //             return self.r/self.q * self.K
-    //     else:
-    //         if self.r >= self.q:
-    //             return self.K
-    //         else:
-    //             return self.r/self.q * self.K
-    fn B_at_zero(&self) -> f64 {
+    fn exercise_boundary_at_zero(&self) -> f64 {
         match self.option_type {
-            OptionType::Call => {
-                if self.r <= self.q {
-                    return self.K;
-                } else {
-                    return self.r / self.q * self.K;
-                }
-            }
-            OptionType::Put => {
-                if self.r >= self.q {
-                    return self.K;
-                } else {
-                    return self.r / self.q * self.K;
-                }
-            }
+            OptionType::Call => match self.riskfree <= self.dividend {
+                true => self.strike,
+                false => self.riskfree / self.dividend * self.strike,
+            },
+            OptionType::Put => match self.riskfree >= self.dividend {
+                true => self.strike,
+                false => self.riskfree / self.dividend * self.strike,
+            },
         }
     }
 
-    // def compute_miscellaneous(self, tau, S):
-    //     #order cannot be changed
-    //     self.v_N = self.N()
-    //     self.v_M = self.M()
-    //     self.v_h = self.h(tau)
-    //     self.v_qQD = self.q_QD(tau)
-    //     self.v_qQDdot = self.q_QD_dot()
-    //     self.v_d1 = europ.EuropeanOption.d1(tau, S, self.r, self.q, self.sigma, self.K)
-    //     self.v_d2 = europ.EuropeanOption.d2(tau, S, self.r, self.q, self.sigma, self.K)
-    //     if self.option_type == OptionType.Put:
-    //         self.v_p = europ.EuropeanOption.european_put_value(tau, S, self.r, self.q, self.sigma, self.K)
-    //     else:
-    //         self.v_p = europ.EuropeanOption.european_call_value(tau, S, self.r, self.q, self.sigma, self.K)
-    //     self.v_theta = europ.EuropeanOption.european_option_theta(tau, S, self.r, self.q, self.sigma, self.K)
-    //     self.v_dlogSdh = self.dlogSdh(tau, S)
-    //     self.v_c = self.c(tau, S)
-    //     self.v_c0 = self.c0(tau, S)
-    //     self.v_b = self.b(tau, S)
-    fn compute_miscellaneous(&mut self, tau: f64, S: f64) {
-        self.v_N = self.N();
-        self.v_M = self.M();
-        self.v_h = self.H(tau);
-        self.v_qQD = self.q_QD(tau);
-        self.v_qQDdot = self.q_QD_dot();
-        self.v_d1 = d1(tau, S, self.r, self.q, self.v, self.K);
-        self.v_d2 = d2(tau, S, self.r, self.q, self.v, self.K);
+    fn exercise_boundary_function(&self, underlying: f64) -> f64 {
+        let t = self.year_fraction();
+        let s = underlying;
 
-        self.v_p = match self.option_type {
-            OptionType::Put => european_put_value(tau, S, self.r, self.q, self.v, self.K),
-            OptionType::Call => european_call_value(tau, S, self.r, self.q, self.v, self.K),
-        };
-
-        self.v_theta = european_option_theta(tau, S, self.r, self.q, self.v, self.K);
-        self.v_dlogSdh = self.dlogSdh(tau, S);
-        self.v_c = self.c(tau, S);
-        self.v_b = self.b(tau, S);
-    }
-
-    // def exercise_boundary_func(self, S, tau):
-    //     if tau == 0:
-    //         if type(S) is float:
-    //             return 0
-    //         else:
-    //             return np.ones(S.size) * 0
-    //     self.compute_miscellaneous(tau, S)
-    //     qQD = self.v_qQD
-    //     p = self.v_p
-    //     c0 = self.v_c0
-    //     d1 = self.v_d1
-    //     if self.option_type == OptionType.Call:
-    //         ans = (1 - np.exp(-self.q * tau) * stats.norm.cdf(d1)) * S - (qQD) * (S - self.K - p)
-    //     else:
-    //         ans = (1 - np.exp(-self.q * tau) * stats.norm.cdf(-d1)) * S + (qQD) * (self.K - S - p)
-    //     return ans
-    fn exercise_boundary_func(&self, S: f64, T: f64) -> f64 {
-        if T == 0.0 {
+        if t == 0.0 {
             return 0.0;
         }
 
-        let (N, M, H, qQD, qQDdot, d1, d2, p, theta, dlogSdh, b, c, c0) = self.precompute(S, T);
-
         let gaussian = Normal::standard();
+
+        let lambda = self.lambda(t);
+        let p = self.value(underlying, t);
+
+        let d1 = d1(
+            t,
+            s,
+            self.riskfree,
+            self.dividend,
+            self.volatility,
+            self.strike,
+        );
 
         match self.option_type {
             OptionType::Call => {
-                (1. - f64::exp(-self.q * T) * gaussian.cdf(d1)) * S - qQD * (S - self.K - p)
+                (1. - f64::exp(-self.dividend * t) * gaussian.cdf(d1)) * underlying
+                    - lambda * (underlying - self.strike - p)
             }
             OptionType::Put => {
-                (1. - f64::exp(-self.q * T) * gaussian.cdf(-d1)) * S + qQD * (self.K - S - p)
+                (1. - f64::exp(-self.dividend * t) * gaussian.cdf(-d1)) * underlying
+                    + lambda * (self.strike - underlying - p)
             }
         }
     }
 
-    // def q_QD(self, tau):
-    //     N = self.v_N
-    //     M = self.v_M
-    //     h = self.v_h
-    //     if self.option_type == OptionType.Call:
-    //         return -0.5*(N-1) + 0.5 * np.sqrt((N-1)*(N-1) + 4 * M/h)
-    //     else:
-    //         return -0.5*(N-1) - 0.5 * np.sqrt((N-1)*(N-1) + 4 * M/h)
-    fn q_QD(&self, tau: f64) -> f64 {
-        let N = self.v_N;
-        let M = self.v_M;
-        let h = self.v_h;
+    fn h(&self, year_fraction: f64) -> f64 {
+        1.0 - (-self.riskfree * year_fraction).exp()
+    }
+
+    fn scale(&self) -> f64 {
+        2.0 * self.riskfree / (self.volatility * self.volatility)
+    }
+
+    fn omega(&self) -> f64 {
+        2.0 * (self.riskfree - self.dividend) / (self.volatility * self.volatility)
+    }
+
+    fn lambda(&self, year_fraction: f64) -> f64 {
+        let (w, scale, h) = (self.omega(), self.scale(), self.h(year_fraction));
 
         match self.option_type {
-            OptionType::Call => -0.5 * (N - 1.) + 0.5 * ((N - 1.) * (N - 1.) + 4. * M / h).sqrt(),
-            OptionType::Put => -0.5 * (N - 1.) - 0.5 * ((N - 1.) * (N - 1.) + 4. * M / h).sqrt(),
+            OptionType::Call => 0.5 * ((1. - w) + ((w - 1.) * (w - 1.) + 4. * scale / h).sqrt()),
+            OptionType::Put => 0.5 * ((1. - w) - ((w - 1.) * (w - 1.) + 4. * scale / h).sqrt()),
         }
     }
 
-    // def q_QD_dot(self):
-    //     N = self.v_N
-    //     M = self.v_M
-    //     h = self.v_h
-    //     return M/(h * h * np.sqrt((N-1)*(N-1) + 4*M/h))
-    fn q_QD_dot(&self) -> f64 {
-        let N = self.v_N;
-        let M = self.v_M;
-        let h = self.v_h;
+    fn lambda_prime(&self, t: f64) -> f64 {
+        let (w, scale, h) = (self.omega(), self.scale(), self.h(t));
 
-        M / (h * h * ((N - 1.) * (N - 1.) + 4. * M / h).sqrt())
+        scale / (h * h * ((w - 1.) * (w - 1.) + 4. * scale / h).sqrt())
     }
 
-    // def c0(self, tau, S):
-    //     N = self.v_N
-    //     M = self.v_M
-    //     h = self.v_h
-    //     qQD = self.v_qQD
-    //     qQDdot = self.v_qQDdot
-    //     p = self.v_p
-    //     theta = self.v_theta
-    //     c = self.v_c
-    //     d1 = self.v_d1
-    //     d2 = self.v_d2
-    //     return - (1-h)*M/(2*qQD + N - 1) * (1/h - (theta*np.exp(self.r * tau))/(self.r*(self.K - S - p)) + qQDdot/(2*qQD+N-1))
-    fn c0(&self, tau: f64, S: f64) -> f64 {
-        let N = self.v_N;
-        let M = self.v_M;
-        let h = self.v_h;
-        let qQD = self.v_qQD;
-        let qQDdot = self.v_qQDdot;
-        let p = self.v_p;
-        let theta = self.v_theta;
-        let c = self.v_c;
-        let d1 = self.v_d1;
-        let d2 = self.v_d2;
+    fn value(&self, underlying: f64, year_fraction: f64) -> f64 {
+        let (r, q, v, k) = (self.riskfree, self.dividend, self.volatility, self.strike);
 
-        -(1. - h) * M / (2. * qQD + N - 1.)
-            * (1. / h - (theta * f64::exp(self.r * tau)) / (self.r * (self.K - S - p))
-                + qQDdot / (2. * qQD + N - 1.))
-    }
-
-    // def c(self, tau, S):
-    //     r = self.r
-    //     q = self.q
-    //     N = self.v_N
-    //     M = self.v_M
-    //     h = self.v_h
-    //     qQD = self.v_qQD
-    //     qQDdot = self.v_qQDdot
-    //     p = self.v_p
-    //     theta = self.v_theta
-    //     c = self.v_c
-    //     d1 = self.v_d1
-    //     d2 = self.v_d2
-    //     dlogSdh = self.v_dlogSdh
-    //     c0 = self.c0(tau, S)
-    //     return c0 - ((1-h)*M)/(2*qQD + N - 1) \
-    //         * ((1 - np.exp(-q * tau)*stats.norm.cdf(-d1))/(self.K - S - p) + qQD/S)\
-    //         * dlogSdh
-    fn c(&self, tau: f64, S: f64) -> f64 {
-        let r = self.r;
-        let q = self.q;
-        let N = self.v_N;
-        let M = self.v_M;
-        let h = self.v_h;
-        let qQD = self.v_qQD;
-        let qQDdot = self.v_qQDdot;
-        let p = self.v_p;
-        let theta = self.v_theta;
-        let c = self.v_c;
-        let d1 = self.v_d1;
-        let d2 = self.v_d2;
-        let dlogSdh = self.v_dlogSdh;
-        let c0 = self.c0(tau, S);
-
-        let mut n = Normal::standard();
-
-        c0 - ((1. - h) * M) / (2. * qQD + N - 1.)
-            * ((1. - f64::exp(-q * tau) * n.cdf(-d1)) / (self.K - S - p) + qQD / S)
-            * dlogSdh
-    }
-
-    // def b(self, tau, S):
-    //     N = self.v_N
-    //     M = self.v_M
-    //     h = self.v_h
-    //     qQD = self.v_qQD
-    //     qQDdot = self.v_qQDdot
-    //     p = self.v_p
-    //     theta = self.v_theta
-    //     c = self.v_c
-    //     d1 = self.v_d1
-    //     d2 = self.v_d2
-    //     return ((1-h)*M*qQDdot)/(2*(2*qQD + N - 1))
-    fn b(&self, tau: f64, S: f64) -> f64 {
-        let N = self.v_N;
-        let M = self.v_M;
-        let h = self.v_h;
-        let qQD = self.v_qQD;
-        let qQDdot = self.v_qQDdot;
-        let p = self.v_p;
-        let theta = self.v_theta;
-        let c = self.v_c;
-        let d1 = self.v_d1;
-        let d2 = self.v_d2;
-
-        ((1. - h) * M * qQDdot) / (2. * (2. * qQD + N - 1.))
-    }
-
-    // def dlogSdh(self, tau, S):
-    //     N = self.v_N
-    //     M = self.v_M
-    //     h = self.v_h
-    //     qQD = self.v_qQD
-    //     qQDdot = self.v_qQDdot
-    //     p = self.v_p
-    //     theta = self.v_theta
-    //     c = self.v_c
-    //     d1 = self.v_d1
-    //     d2 = self.v_d2
-    //     r = self.r
-    //     q = self.q
-    //     dFdh = qQD * theta * np.exp(self.r * tau)/self.r + qQDdot * (self.K - S - p) \
-    //         + (S * self.q *np.exp(-self.q*tau) * stats.norm.cdf(-d1))/(r * (1-h)) \
-    //         - (S * np.exp(-self.q * tau) * stats.norm.pdf(d1))/(2*r*tau*(1-h))\
-    //         * (2*np.log(S/self.K)/(self.sigma * np.sqrt(tau)) - d1)
-    //     dFdS = (1 - qQD) * (1 - np.exp(-q * tau) * stats.norm.cdf(-d1)) \
-    //             + (np.exp(-q * tau) * stats.norm.pdf(d1))/(self.sigma * np.sqrt(tau))
-    //     return -dFdh/dFdS
-    fn dlogSdh(&self, tau: f64, S: f64) -> f64 {
-        let N = self.v_N;
-        let M = self.v_M;
-        let h = self.v_h;
-        let qQD = self.v_qQD;
-        let qQDdot = self.v_qQDdot;
-        let p = self.v_p;
-        let theta = self.v_theta;
-        let c = self.v_c;
-        let d1 = self.v_d1;
-        let d2 = self.v_d2;
-        let r = self.r;
-        let q = self.q;
-
-        let mut n = Normal::standard();
-
-        let dFdh = qQD * theta * f64::exp(self.r * tau) / self.r
-            + qQDdot * (self.K - S - p)
-            + (S * self.q * f64::exp(-self.q * tau) * n.cdf(-d1)) / (r * (1. - h))
-            - (S * f64::exp(-self.q * tau) * n.pdf(d1)) / (2. * r * tau * (1. - h))
-                * (2. * f64::ln(S / self.K) / (self.v * f64::sqrt(tau)) - d1);
-
-        let dFdS = (1. - qQD) * (1. - f64::exp(-q * tau) * n.cdf(-d1))
-            + (f64::exp(-q * tau) * n.pdf(d1)) / (self.v * f64::sqrt(tau));
-
-        -dFdh / dFdS
-    }
-
-    // def h(self, tau):
-    //     return 1 - np.exp(-self.r * tau)
-    fn H(&self, T: f64) -> f64 {
-        1.0 - (-self.r * T).exp()
-    }
-
-    // def M(self):
-    //     return 2 * self.r / (self.sigma * self.sigma)
-    fn M(&self) -> f64 {
-        2.0 * self.r / (self.v * self.v)
-    }
-
-    // def N(self):
-    //     return 2 * (self.r - self.q) / (self.sigma * self.sigma)
-    fn N(&self) -> f64 {
-        2.0 * (self.r - self.q) / (self.v * self.v)
-    }
-
-    fn P(&self, S: f64, T: f64) -> f64 {
         match self.option_type {
-            OptionType::Put => european_put_value(T, S, self.r, self.q, self.v, self.K),
-            OptionType::Call => european_call_value(T, S, self.r, self.q, self.v, self.K),
+            OptionType::Put => european_put_value(year_fraction, underlying, r, q, v, k),
+            OptionType::Call => european_call_value(year_fraction, underlying, r, q, v, k),
         }
     }
 
-    /// Compute and pack the intermediate values for the QD+ algorithm.
-    fn precompute(
-        &self,
-        S: f64,
-        T: f64,
-    ) -> (
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-        f64,
-    ) {
-        let mut gaussian = Normal::standard();
+    fn c_zero(&self, underlying: f64, year_fraction: f64) -> f64 {
+        let s = underlying;
+        let t = year_fraction;
 
-        let N = self.N();
-        let M = self.M();
-        let H = self.H(T);
+        let (r, q, v, k) = (self.riskfree, self.dividend, self.volatility, self.strike);
 
-        let r = self.r;
-        let q = self.q;
+        let (p, w, scale, h, lambda, lambda_prime, theta) = (
+            self.value(s, t),
+            self.omega(),
+            self.scale(),
+            self.h(year_fraction),
+            self.lambda(t),
+            self.lambda_prime(t),
+            european_option_theta(year_fraction, s, r, q, v, k),
+        );
 
-        let qQD = match self.option_type {
-            OptionType::Call => -0.5 * (N - 1.) + 0.5 * ((N - 1.) * (N - 1.) + 4. * M / H).sqrt(),
-            OptionType::Put => -0.5 * (N - 1.) - 0.5 * ((N - 1.) * (N - 1.) + 4. * M / H).sqrt(),
+        let term_1 = -(1. - h) * scale / (2. * lambda + w - 1.);
+        let term_2 = 1. / h;
+        let term_3 = f64::exp(r * t) * theta / (r * (self.strike - s - p));
+        let term_4 = lambda_prime / (2. * lambda + w - 1.);
+
+        term_1 * (term_2 - term_3 + term_4)
+    }
+
+    fn li_2009_eq30(&self, year_fraction: f64) -> f64 {
+        let t = year_fraction;
+
+        let w = self.omega();
+        let h = self.h(t);
+        let scale = self.scale();
+        let lambda = self.lambda(t);
+        let lambda_prime = self.lambda_prime(t);
+
+        ((1. - h) * scale * lambda_prime) / (2. * (2. * lambda + w - 1.))
+    }
+
+    fn li_2009_eq31(&self, s: f64, year_fraction: f64) -> f64 {
+        let gaussian = Normal::standard();
+
+        let t = year_fraction;
+
+        let (r, q, v, k) = (self.riskfree, self.dividend, self.volatility, self.strike);
+
+        let d1 = d1(t, s, r, q, v, k);
+        let p = self.value(s, t);
+
+        let w = self.omega();
+        let c0 = self.c_zero(s, t);
+        let h = self.h(t);
+        let scale = self.scale();
+        let lambda = self.lambda(t);
+
+        c0 - ((1. - h) * scale) / (2. * lambda + w - 1.)
+            * ((1. - f64::exp(-q * t) * gaussian.cdf(-d1)) / (self.strike - s - p) + lambda / s)
+            * self.li_2009_eq36(s, t)
+    }
+
+    fn li_2009_eq36(&self, s: f64, t: f64) -> f64 {
+        -self.li_2009_eq37(s, t) / self.li_2009_eq38(s, t)
+    }
+
+    fn li_2009_eq37(&self, s: f64, t: f64) -> f64 {
+        let gaussian = Normal::standard();
+        let r = self.riskfree;
+        let q = self.dividend;
+
+        let d1 = d1(t, s, r, q, self.volatility, self.strike);
+
+        let lambda = self.lambda(t);
+        let lambda_prime = self.lambda_prime(t);
+        let theta = european_option_theta(t, s, r, q, self.volatility, self.strike);
+        let p = self.value(t, s);
+        let h = self.h(t);
+
+        let term_1 = lambda * theta * f64::exp(r * t) / r;
+        let term_2 = lambda_prime * (self.strike - s - p);
+        let term_3 = (s * q * f64::exp(-q * t) * gaussian.cdf(-d1)) / (r * (1. - h));
+        let term_4 = (s * f64::exp(-q * t) * gaussian.pdf(d1)) / (2. * r * t * (1. - h));
+        let term_5 = 2. * f64::ln(s / self.strike) / (self.volatility * f64::sqrt(t)) - d1;
+
+        term_1 + term_2 + term_3 - term_4 * term_5
+    }
+
+    fn li_2009_eq38(&self, s: f64, t: f64) -> f64 {
+        let gaussian = Normal::standard();
+
+        let r = self.riskfree;
+        let q = self.dividend;
+
+        let d1 = d1(t, s, r, q, self.volatility, self.strike);
+        let lambda = self.lambda(t);
+
+        let term_1 = 1. - lambda;
+        let term_2 = 1. - f64::exp(-q * t) * gaussian.cdf(-d1);
+        let term_3 = f64::exp(-q * t) * gaussian.pdf(d1) / (self.volatility * f64::sqrt(t));
+
+        term_1 * term_2 + term_3
+    }
+}
+
+#[cfg(test)]
+mod test_qdplus {
+    use super::*;
+    use crate::OptionType;
+    use time::macros::date;
+
+    #[test]
+    fn test_qdplus() {
+        let qdp = QDplus {
+            riskfree: 0.05,
+            dividend: 0.02,
+            volatility: 0.2,
+            strike: 10.0,
+            option_type: OptionType::Call,
+            expiration_date: date!(2025 - 07 - 20),
+            evaluation_date: Some(date!(2024 - 07 - 20)),
         };
 
-        let qQDdot = M / (H * H * ((N - 1.) * (N - 1.) + 4. * M / H).sqrt());
+        println!("Year fraction = {:?}", qdp.year_fraction());
 
-        let d1 = d1(T, S, self.r, self.q, self.v, self.K);
-        let d2 = d2(T, S, self.r, self.q, self.v, self.K);
-
-        let p = self.P(T, S);
-
-        let theta = european_option_theta(T, S, self.r, self.q, self.v, self.K);
-
-        let dFdh = qQD * theta * f64::exp(self.r * T) / self.r
-            + qQDdot * (self.K - S - p)
-            + (S * self.q * f64::exp(-self.q * T) * gaussian.cdf(-d1)) / (r * (1. - H))
-            - (S * f64::exp(-self.q * T) * gaussian.pdf(d1)) / (2. * r * T * (1. - H))
-                * (2. * f64::ln(S / self.K) / (self.v * f64::sqrt(T)) - d1);
-
-        let dFdS = (1. - qQD) * (1. - f64::exp(-q * T) * gaussian.cdf(-d1))
-            + (f64::exp(-q * T) * gaussian.pdf(d1)) / (self.v * f64::sqrt(T));
-
-        let dlogSdh = -dFdh / dFdS;
-
-        let c0 = -(1. - H) * M / (2. * qQD + N - 1.)
-            * (1. / H - (theta * f64::exp(self.r * T)) / (self.r * (self.K - S - p))
-                + qQDdot / (2. * qQD + N - 1.));
-
-        let c = c0
-            - ((1. - H) * M) / (2. * qQD + N - 1.)
-                * ((1. - f64::exp(-q * T) * gaussian.cdf(-d1)) / (self.K - S - p) + qQD / S)
-                * dlogSdh;
-
-        let b = ((1. - H) * M * qQDdot) / (2. * (2. * qQD + N - 1.));
-
-        (N, M, H, qQD, qQDdot, d1, d2, p, theta, dlogSdh, b, c, c0)
+        println!(
+            "ATM = {}, Boundary = {}",
+            qdp.price(10.0),
+            qdp.compute_exercise_boundary().unwrap()
+        );
+        println!(
+            "ITM = {}, Boundary = {}",
+            qdp.price(05.0),
+            qdp.compute_exercise_boundary().unwrap()
+        );
+        println!(
+            "OTM = {}, Boundary = {}",
+            qdp.price(15.0),
+            qdp.compute_exercise_boundary().unwrap()
+        );
     }
 }

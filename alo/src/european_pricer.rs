@@ -53,7 +53,7 @@ pub fn european_call_value(tau: f64, s0: f64, r: f64, q: f64, vol: f64, k: f64) 
 pub fn european_option_theta(tau: f64, s0: f64, r: f64, q: f64, vol: f64, k: f64) -> f64 {
     let r = f64::max(r, 1e-10);
     let tau = f64::max(tau, 1e-10);
-    let N = Normal::new(0.0, 1.0).unwrap();
+    let N = Normal::standard();
 
     let d1 = d1(tau, s0, r, q, vol, k);
     let d2 = d2(tau, s0, r, q, vol, k);
@@ -137,3 +137,8 @@ pub fn d2(tau: f64, s0: f64, r: f64, q: f64, vol: f64, k: f64) -> f64 {
 //     put = EuropeanOption.european_option_value(T, S0, r, q, sigma, K)
 //     call =  EuropeanOption.european_option_value(T, K, q, r, sigma , S0)
 //     print("call = ", call, ", put = ", put)
+
+// import numpy as np
+// import scipy.stats as stats
+// import scipy.optimize
+// import EuropeanOptionSolver as europ

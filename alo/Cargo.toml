@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 argmin = "0.10.0"
 statrs = "0.17.1"
+time = { version = "0.3.36", features = ["macros"] }
