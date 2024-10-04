@@ -17,7 +17,7 @@ pub struct QDplus {
 }
 
 const DAYS_IN_YEAR: f64 = 365.25;
-const MAX_ITERS: u64 = 10000;
+const MAX_ITERS: u64 = 10_000;
 const LOWER_BOUND: f64 = 0.0;
 const UPPER_BOUND_MULTIPLIER: f64 = 100.0;
 
@@ -340,5 +340,21 @@ mod test_qdplus {
             qdp.price(15.0),
             qdp.compute_exercise_boundary().unwrap()
         );
+
+        let mut qdp = QDplus {
+            riskfree: 0.045,
+            dividend: 0.05,
+            volatility: 0.25,
+            strike: 130.0,
+            option_type: OptionType::Call,
+            expiration_date: date!(2025 - 07 - 20),
+            evaluation_date: Some(date!(2024 - 07 - 20)),
+        };
+
+        for i in 1..=20 {
+            qdp.expiration_date = date!(2025 - 07 - 20) + time::Duration::days(i * 365);
+
+            println!("{}", qdp.compute_exercise_boundary().unwrap());
+        }
     }
 }
